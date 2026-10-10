@@ -1,0 +1,13 @@
+build*/
+artifacts/
+results/
+*.user
+.agents/
+.aws/
+.codex/
+# Local input images and datasets
+images.jpeg
+data/
+datasets/
+.tools/
+release/

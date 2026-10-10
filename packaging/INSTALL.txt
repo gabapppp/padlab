@@ -1,0 +1,16 @@
+PadLab 0.1.0 — Ubuntu 22.04 x86_64
+
+Recommended: install the .deb on Ubuntu 22.04:
+  sudo apt install ./padlab-0.1.0-ubuntu22.04-amd64.deb
+  padlab
+
+For the tar.gz binary archive, install runtime dependencies first:
+  sudo apt install libqt5widgets5 libqt5concurrent5 libopencv-core4.5d libopencv-imgproc4.5d libopencv-imgcodecs4.5d qtwayland5
+  ./bin/padlab
+
+CLI:
+  ./bin/padlab-cli --help
+
+These are dynamically linked Linux x86_64 binaries built on Ubuntu 22.04.
+The image processing runs offline. No input dataset is included in the release.
+The example images are synthetic and generated from the test source.

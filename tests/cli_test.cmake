@@ -1,0 +1,15 @@
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef RUN_ID)
+set(OUTPUT "${DEMO}/../cli-results-${RUN_ID}")
+execute_process(COMMAND "${CLI}" --config "${DEMO}/pipeline.json"
+  --input "${DEMO}/images" --masks "${DEMO}/masks" --boxes "${DEMO}/boxes"
+  --output "${OUTPUT}" RESULT_VARIABLE STATUS OUTPUT_VARIABLE LOG ERROR_VARIABLE ERROR)
+if(NOT STATUS EQUAL 0)
+  message(FATAL_ERROR "CLI failed: ${STATUS} ${ERROR} ${LOG}")
+endif()
+file(READ "${OUTPUT}/report.csv" REPORT)
+file(READ "${OUTPUT}/summary.json" SUMMARY)
+if(NOT REPORT MATCHES "below_target" OR NOT REPORT MATCHES "pass" OR NOT SUMMARY MATCHES "\"processed\": 4")
+  message(FATAL_ERROR "Unexpected CLI metrics: ${REPORT} ${SUMMARY}")
+endif()
+message(STATUS "CLI tested four labeled samples, including passing and failing cases")
+file(REMOVE_RECURSE "${OUTPUT}")

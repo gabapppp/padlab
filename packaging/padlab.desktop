@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PadLab
+Comment=Configure and evaluate OpenCV image processing pipelines
+Exec=padlab
+Icon=padlab
+Terminal=false
+Categories=Graphics;Science;

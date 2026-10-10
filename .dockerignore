@@ -1,0 +1,9 @@
+*
+!CMakeLists.txt
+!src/
+!src/**
+!tests/
+!tests/**
+!Dockerfile
+!packaging/
+!packaging/**
