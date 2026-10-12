@@ -3,7 +3,7 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
 repo="${1:-gabapppp/padlab}"
-version=0.1.0
+version=0.2.0
 tag="v$version"
 release_dir="$project_dir/artifacts/ubuntu22/release"
 if command -v gh >/dev/null 2>&1; then

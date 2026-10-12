@@ -8,10 +8,10 @@ namespace pad {
 static void fail(const QString& s){throw std::runtime_error(s.toStdString());}
 QStringList imageFiles(const QString& folder) {
  QDir d(folder);if(!d.exists())fail("Input directory does not exist");QStringList out;
- for(const auto& f:d.entryInfoList(QDir::Files,QDir::Name)){QString ext=f.suffix().toLower();if(QStringList{"png","jpg","jpeg","bmp","tif","tiff","webp"}.contains(ext))out<<f.absoluteFilePath();}return out;
+ for(const auto& f:d.entryInfoList(QDir::Files,QDir::Name)){QString ext=f.suffix().toLower();if(imageExtensions().contains(ext))out<<f.absoluteFilePath();}return out;
 }
 Row assess(const QString& file,const Result& r,const QJsonObject& c,const QString& maskPath,const QString& boxPath) {
- Row row;row.file=file;row.objects=int(r.boxes.size());row.ms=r.ms;row.status="unlabeled";
+ Row row;row.automatic=r.automatic;row.file=file;row.objects=int(r.boxes.size());row.ms=r.ms;row.status="unlabeled";
  std::vector<cv::Rect> gt;
  if(!maskPath.isEmpty()&&QFileInfo::exists(maskPath)){auto m=readImage(maskPath,true);row.mask=evaluateMask(r.mask,m);row.hasMask=true;row.maskSource=maskPath;gt=maskBoxes(m);}
  if(!boxPath.isEmpty()&&QFileInfo::exists(boxPath)){gt=readBoxes(boxPath,r.mask.size());row.hasBoxes=true;row.boxSource=boxPath;}
@@ -27,7 +27,7 @@ QString metricsText(const Row& r){
  if(!r.error.isEmpty())s+="\n"+r.error;return s;
 }
 QJsonObject rowJson(const Row& r){
- QJsonObject o{{"file",r.file},{"status",r.status},{"error",r.error},{"regions",r.objects},{"ms",r.ms},{"mask_source",r.maskSource},{"box_source",r.boxSource}};
+ QJsonObject o{{"file",r.file},{"status",r.status},{"error",r.error},{"regions",r.objects},{"ms",r.ms},{"input",r.inputMetadata},{"automatic",r.automatic},{"mask_source",r.maskSource},{"box_source",r.boxSource}};
  o["mask"]=r.hasMask?QJsonValue(QJsonObject{{"iou",r.mask.iou},{"dice",r.mask.dice},{"precision",r.mask.precision},{"recall",r.mask.recall},{"accuracy",r.mask.accuracy},{"tp",r.mask.tp},{"fp",r.mask.fp},{"fn",r.mask.fn},{"tn",r.mask.tn}}):QJsonValue(QJsonValue::Null);
  auto m=fromCounts(r.detection.tp,r.detection.fp,r.detection.fn,0);
  o["boxes"]=r.hasBoxes?QJsonValue(QJsonObject{{"tp",r.detection.tp},{"fp",r.detection.fp},{"fn",r.detection.fn},{"precision",m.precision},{"recall",m.recall},{"f1",m.dice},{"mean_matched_iou",r.detection.meanMatchedIou}}):QJsonValue(QJsonValue::Null);return o;
@@ -39,7 +39,7 @@ void exportStageImages(const QString& directory,const cv::Mat& original,const Re
  for(const auto& stage:result.stages){
   const QString file=QString("%1-%2.png").arg(stage.stepIndex+1,2,10,QChar('0')).arg(config["steps"].toArray()[stage.stepIndex].toObject()["type"].toString());
   writeImage(out.filePath(file),boundaryOverlay(stage.image,stage.boundaries));
-  manifest.append(QJsonObject{{"step_index",stage.stepIndex},{"name",stage.name},{"file",file},{"milliseconds",stage.ms}});
+  manifest.append(QJsonObject{{"step_index",stage.stepIndex},{"name",stage.name},{"file",file},{"milliseconds",stage.ms},{"automatic",stage.automatic}});
  }
  saveJson(out.filePath("stages.json"),QJsonObject{{"schema_version",1},{"steps",manifest}});
  saveJson(out.filePath("boundaries.json"),boundariesJson(result));
@@ -58,12 +58,13 @@ Batch runFolder(const QString& input,const QString& masks,const QString& boxes,c
  QString report="file,status,error,regions,ms,mask_iou,dice,pixel_precision,pixel_recall,pixel_accuracy,box_tp,box_fp,box_fn,box_mean_matched_iou,mask_source,box_source\n";
  for(int i=0;i<files.size();i++) {
   if(cancel.load()){batch.cancelled=true;break;}Row row;row.file=files[i];QString name=QFileInfo(files[i]).fileName();
-  try {auto original=readImage(files[i]);auto result=run(original,c,false,[&]{return cancel.load();});if(cancel.load()){batch.cancelled=true;break;}
-   row.objects=int(result.boxes.size());row.ms=result.ms;
+  try {auto loaded=loadImage(files[i]);row.inputMetadata=loaded.metadata;auto original=loaded.image;auto result=run(original,c,false,[&]{return cancel.load();});if(cancel.load()){batch.cancelled=true;break;}
+   row.objects=int(result.boxes.size());row.ms=result.ms;row.automatic=result.automatic;
    writeImage(out.filePath("masks/"+name+".png"),result.mask);writeImage(out.filePath("overlays/"+name+".png"),boundaryOverlay(result.overlay,result.boundaries));saveJson(out.filePath("boundaries/"+name+".json"),boundariesJson(result));saveJson(out.filePath("boxes/"+name+".json"),boxesJson(result.boxes));
    for(size_t k=0;k<result.boxes.size();k++){auto box=result.boxes[k];writeImage(out.filePath("crops/"+name+QString(".pad-%1.png").arg(k)),original(box));writeImage(out.filePath("crops/"+name+QString(".pad-%1-mask.png").arg(k)),result.mask(box));}
    row.maskSource=masks.isEmpty()?QString():QDir(masks).filePath(name+".png");row.boxSource=boxes.isEmpty()?QString():QDir(boxes).filePath(name+".json");
    row=assess(files[i],result,c,masks.isEmpty()?QString():QDir(masks).filePath(name+".png"),boxes.isEmpty()?QString():QDir(boxes).filePath(name+".json"));
+   row.inputMetadata=loaded.metadata;row.automatic=result.automatic;
    if(row.hasMask){labeled++;tp+=row.mask.tp;fp+=row.mask.fp;fn+=row.mask.fn;tn+=row.mask.tn;macro+=row.mask.iou;}
    if(row.hasBoxes){boxLabeled++;dtp+=row.detection.tp;dfp+=row.detection.fp;dfn+=row.detection.fn;}if(row.passed)passed++;
   } catch(const std::exception& e){if(cancel.load()){batch.cancelled=true;break;}row.hasMask=false;row.hasBoxes=false;row.status="error";row.error=QString::fromUtf8(e.what());errors++;}

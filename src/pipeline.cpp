@@ -15,6 +15,11 @@ static void fail(const QString& s) { throw std::runtime_error(s.toStdString()); 
 const std::vector<Definition>& definitions() {
  static const std::vector<Definition> d={
  {"gray","Grayscale",{}},
+ {"auto_contrast","Auto contrast (percentile stretch)",{{"clip_percent",1,0,20,false}}},
+ {"auto_gamma","Auto gamma",{{"target",0.5,0.05,0.95,false}}},
+ {"auto_threshold","Auto threshold + polarity",{{"method",0,0,1,true},{"polarity",0,0,2,true}}},
+ {"auto_canny","Auto Canny (gradient percentile)",{{"percentile",85,1,99,false},{"low_ratio",0.4,0.05,0.95,false}}},
+ {"auto_polarity","Auto foreground polarity",{}},
  {"channel","Color channel (BGR / HSV / Lab)",{{"space",0,0,2,true},{"channel",0,0,2,true}}},
  {"clahe","CLAHE",{{"clip",2,0.1,40,false},{"grid",8,1,64,true}}},
  {"gaussian","Gaussian blur",{{"kernel",5,1,99,true},{"sigma",0,0,50,false}}},
@@ -85,7 +90,9 @@ void validate(const QJsonObject& c) {
   if(t=="edge_localize") { if(mode!=1||geometry)fail("edge_localize must follow the final binary mask, once");geometry=1;continue; }
   if(t=="subpixel") { if(geometry!=1)fail("subpixel must immediately follow enabled edge_localize, once");geometry=2;continue; }
   if(geometry)fail("Place all mask processing before edge_localize / subpixel");
-  if(t=="illumination"||t=="guided"||t=="sauvola") { if(mode!=0)fail(t+" requires a grayscale/channel intensity image, before binarization");mode=t=="sauvola"?1:0; }
+  if(t=="auto_contrast"||t=="auto_gamma"||t=="auto_threshold"||t=="auto_canny") { if(mode!=0)fail(t+" requires grayscale intensity before binarization");mode=(t=="auto_threshold"||t=="auto_canny")?1:0; }
+  else if(t=="auto_polarity") { if(mode!=1)fail("auto_polarity requires a binary mask"); }
+  else if(t=="illumination"||t=="guided"||t=="sauvola") { if(mode!=0)fail(t+" requires a grayscale/channel intensity image, before binarization");mode=t=="sauvola"?1:0; }
   else if(t=="watershed") { if(mode!=1)fail("watershed requires a binary mask"); }
   else if(t=="gray") mode=mode==1?1:0;
   else if(t=="channel"||t=="hsv") { if(mode!=3) fail(t+" needs original/color BGR input; place before grayscale"); mode=t=="hsv"?1:0; }
@@ -106,6 +113,7 @@ void saveJson(const QString& path,const QJsonObject& value) {
  auto bytes=QJsonDocument(value).toJson(); if(f.write(bytes)!=bytes.size()||!f.commit()) fail("Cannot save "+path);
 }
 cv::Mat readImage(const QString& path,bool mask) {
+ if(!mask)return loadImage(path).image;
  QFile f(path); if(!f.open(QIODevice::ReadOnly)) fail("Cannot read "+path+": "+f.errorString()); auto b=f.readAll();
  std::vector<uchar> bytes(b.begin(),b.end()); auto m=cv::imdecode(bytes,mask?cv::IMREAD_UNCHANGED:cv::IMREAD_COLOR);
  if(m.empty()) fail("Cannot decode "+path);
@@ -128,7 +136,9 @@ Result run(const cv::Mat& input,const QJsonObject& c,bool capture,const std::fun
   if(cancelled&&cancelled()) fail("Cancelled"); ++index;
   auto s=v.toObject(); if(!s["enabled"].toBool()) continue; auto p=s["params"].toObject(); const auto t=s["type"].toString();
   auto n=[&](const char* k){return p[k].toInt();}; auto x=[&](const char* k){return p[k].toDouble();}; QElapsedTimer timer; timer.start();
-  if(t=="edge_localize") {
+  QJsonObject chosen;
+  if(t.startsWith("auto_"))m=automaticStep(t,m,p,chosen);
+  else if(t=="edge_localize") {
    r.boundaries=localizeEdges(m,n("source")==1?intensity:input,n("radius"),x("sigma"),x("min_gradient"),n("normal_span"),cancelled);r.hasBoundaries=true;
   }
   else if(t=="subpixel") { refineSubpixel(r.boundaries,x("min_curvature"),cancelled);r.subpixel=true; }
@@ -161,9 +171,10 @@ Result run(const cv::Mat& input,const QJsonObject& c,bool capture,const std::fun
    m=out;
   }
   const bool geometryStep=t=="edge_localize"||t=="subpixel";
-  if(m.channels()==1&&(t=="gray"||t=="channel"||t=="clahe"||t=="gaussian"||t=="median"||t=="bilateral"||t=="illumination"||t=="guided"))intensity=m.clone();
+  if(m.channels()==1&&(t=="gray"||t=="channel"||t=="clahe"||t=="gaussian"||t=="median"||t=="bilateral"||t=="illumination"||t=="guided"||t=="auto_contrast"||t=="auto_gamma"))intensity=m.clone();
+  if(!chosen.isEmpty())r.automatic.append(QJsonObject{{"step_index",index-1},{"type",t},{"values",chosen}});
   if(capture) {
-   Stage stage;stage.name=QString::number(index)+". "+t;stage.stepIndex=index-1;
+   Stage stage;stage.automatic=chosen;stage.name=QString::number(index)+". "+definition(t).label;stage.stepIndex=index-1;
    stage.image=geometryStep?input:m.clone();stage.ms=timer.nsecsElapsed()/1e6;
    if(geometryStep)stage.boundaries=r.boundaries;
    r.stages.push_back(std::move(stage));

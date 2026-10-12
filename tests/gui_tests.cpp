@@ -9,12 +9,27 @@ int main(int argc,char** argv){QApplication app(argc,argv);QApplication::setStyl
  // Toggle grayscale off: validation must clear old result, not show stale metrics.
  auto* list=w.findChild<QListWidget*>();require(list,"pipeline list");list->item(0)->setCheckState(Qt::Unchecked);waitUntil([&]{return state->text().startsWith("Invalid pipeline");});require(!metrics->text().contains("1 regions"),"stale score cleared");list->item(0)->setCheckState(Qt::Checked);waitUntil([&]{return state->text().startsWith("Preview ready");});
  // Exercise reorder through actual GUI buttons and verify both step types survive.
- QPushButton* down=nullptr;QPushButton* up=nullptr;for(auto* b:w.findChildren<QPushButton*>()){if(b->text()=="↓")down=b;if(b->text()=="↑")up=b;}require(down&&up,"reorder controls");list->setCurrentRow(0);QTest::mouseClick(down,Qt::LeftButton);require(list->item(0)->text().contains("gaussian")&&list->item(1)->text().contains("gray"),"reorder preserves distinct steps");QTest::mouseClick(up,Qt::LeftButton);waitUntil([&]{return state->text().startsWith("Preview ready");});QTest::qWait(100);
+ QPushButton* down=nullptr;QPushButton* up=nullptr;for(auto* b:w.findChildren<QPushButton*>()){if(b->text()=="↓")down=b;if(b->text()=="↑")up=b;}require(down&&up,"reorder controls");list->setCurrentRow(0);QTest::mouseClick(down,Qt::LeftButton);require(list->item(0)->data(Qt::UserRole).toString()=="gaussian"&&list->item(1)->data(Qt::UserRole).toString()=="gray","reorder preserves distinct steps");QTest::mouseClick(up,Qt::LeftButton);waitUntil([&]{return state->text().startsWith("Preview ready");});QTest::qWait(100);
  auto* info=w.findChild<QLabel*>("stageInfo");auto* next=w.findChild<QPushButton*>("nextStep");require(info&&next,"step viewer controls");
- list->setCurrentRow(1);require(stages->currentData().toInt()==1&&info->text().contains("gaussian"),"click selects stage output");
- QTest::mouseClick(next,Qt::LeftButton);require(stages->currentData().toInt()==2&&info->text().contains("threshold"),"next step navigation");
+ list->setCurrentRow(1);require(stages->currentData().toInt()==1&&info->text().contains("Gaussian"),"click selects stage output");
+ QTest::mouseClick(next,Qt::LeftButton);require(stages->currentData().toInt()==2&&info->text().contains("Threshold"),"next step navigation");
  auto* action=w.findChild<QAction*>("precisionPreset");require(action,"precision preset");action->trigger();
- waitUntil([&]{return state->text().startsWith("Preview ready");});require(info->text().contains("subpixel")&&info->text().contains("refined"),"subpixel preview and stats");
+ waitUntil([&]{return state->text().startsWith("Preview ready");});require(info->text().contains("Subpixel")&&info->text().contains("refined"),"subpixel preview and stats");
  auto* view=w.findChild<ImageView*>("outputView");int paths=0;for(auto* item:view->scene()->items())if(item->type()==QGraphicsPathItem::Type)paths++;require(paths>0,"vector boundaries drawn");
  view->scale(2,2);double zoom=view->transform().m11();stages->setCurrentIndex(0);require(std::abs(view->transform().m11()-zoom)<1e-9,"zoom preserved across views");
+ auto* automatic=w.findChild<QAction*>("autoPreset0");require(automatic,"auto preset menu");automatic->trigger();
+ waitUntil([&]{return state->text().startsWith("Preview ready");});list->setCurrentRow(3);require(info->text().contains("Auto selected:"),"effective auto values visible");
+ auto* polarity=w.findChild<QComboBox*>("param_polarity");require(polarity&&polarity->count()==3,"named polarity options");polarity->setCurrentIndex(2);
+ auto* undo=w.findChild<QAction*>("undoPipeline");auto* redo=w.findChild<QAction*>("redoPipeline");require(undo&&undo->isEnabled(),"undo available");undo->trigger();require(redo->isEnabled(),"redo available");redo->trigger();undo->trigger();
+ waitUntil([&]{return state->text().startsWith("Preview ready");});list->setCurrentRow(3);
+
+ auto second=d.filePath("z-second.png");pad::writeImage(second,image);w.openImage(path);waitUntil([&]{return state->text().startsWith("Preview ready");});
+ auto* nextImage=w.findChild<QPushButton*>("nextImage");auto* previousImage=w.findChild<QPushButton*>("previousImage");auto* imageDetails=w.findChild<QLabel*>("imageDetails");
+ require(nextImage&&previousImage&&imageDetails&&nextImage->isEnabled()&&!previousImage->isEnabled(),"folder image navigation state");
+ QTest::mouseClick(nextImage,Qt::LeftButton);waitUntil([&]{return state->text().startsWith("Preview ready");});require(imageDetails->text().contains("z-second.png")&&!nextImage->isEnabled()&&previousImage->isEnabled(),"next image loaded");
+ QTest::mouseClick(previousImage,Qt::LeftButton);waitUntil([&]{return state->text().startsWith("Preview ready");});require(imageDetails->text().contains("synthetic-pad.png"),"previous image loaded");
+ QMimeData mime;mime.setUrls({QUrl::fromLocalFile(second)});QDragEnterEvent enter(QPoint(10,10),Qt::CopyAction,&mime,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(&w,&enter);require(enter.isAccepted(),"local image drag accepted");
+ QDropEvent drop(QPointF(10,10),Qt::CopyAction,&mime,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(&w,&drop);waitUntil([&]{return state->text().startsWith("Preview ready");});require(imageDetails->text().contains("z-second.png"),"drop opens image");
+ list->setCurrentRow(3);
+ for(auto* b:w.findChildren<QPushButton*>())if(b->text()=="Fit both")QTest::mouseClick(b,Qt::LeftButton);QTest::qWait(50);
  require(w.grab().save("gui-preview.png"),"screenshot saved");std::cout<<"GUI preview, validation, stage view and reorder passed\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;}}

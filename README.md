@@ -26,7 +26,7 @@ Copy `artifacts/ubuntu22/` sang máy đích. Đây là binary liên kết độn
 
 ```bash
 sudo apt-get install libqt5widgets5 libqt5concurrent5 libopencv-core4.5d \
-  libopencv-imgproc4.5d libopencv-imgcodecs4.5d qtwayland5
+  libopencv-imgproc4.5d libopencv-imgcodecs4.5d qtwayland5 qt5-image-formats-plugins kimageformat-plugins
 ./bin/padlab
 ```
 
@@ -36,7 +36,7 @@ Hoặc mang image Docker offline bằng `docker save -o padlab-ubuntu22.tar padl
 
 1. **Open image**: ảnh gốc bên trái; overlay, mask hoặc kết quả từng bước bên phải. Wheel để zoom, kéo để pan, **Fit both** để fit.
 2. Thêm bước từ dropdown, bật/tắt bằng checkbox, đổi thứ tự với ↑/↓, sửa tham số. Preview chạy nền, debounce 250 ms. Config chưa hợp lệ hiển thị lỗi và xóa điểm cũ.
-3. **Load GT mask / Load GT boxes** để đánh giá một ảnh. **Clear GT** để bỏ nhãn hiện tại. Mở ảnh mới sẽ xóa GT cũ.
+3. **Ground truth → Load mask / Load boxes** để đánh giá một ảnh. **Clear ground truth** để bỏ nhãn hiện tại. Mở ảnh mới sẽ xóa GT cũ.
 4. **Folder evaluation**: chọn folder ảnh, mask và/hoặc boxes; chọn một thư mục output MỚI. Folder scan không recursive. **Run folder**, **Cancel**, lọc ảnh chưa đạt và double-click để xem lại với config của batch đó.
 5. **Export pipeline** lưu JSON phiên bản 1, dùng lại trong GUI hoặc CLI. **Export result** xuất mask, overlay, boxes, metrics, config và crop pad kèm mask crop.
 
@@ -44,7 +44,7 @@ Mỗi batch dùng snapshot config lúc bấm Run; chỉnh config trong lúc ch�
 
 Các bước: grayscale; kênh BGR/HSV/Lab; CLAHE; Gaussian/median/bilateral; fixed/Otsu/adaptive threshold; HSV range; Canny; morphology; invert; fill holes; lọc connected components theo area, aspect ratio, extent và largest-only. Không resize ảnh trong pipeline.
 
-Tham số enum hiển thị ở panel trái. Kernel/block phải lẻ. `channel.space`: 0 BGR, 1 HSV, 2 Lab; chỉ số channel 0..2. Hue HSV 0..179. Morphology: 0 open, 1 close, 2 erode, 3 dilate, 4 top-hat, 5 black-hat. Shape: 0 rectangle, 1 cross, 2 ellipse. Blur sau mask làm ảnh mất tính nhị phân nên cần threshold lại trước khi lọc component hoặc xuất.
+Tham số enum hiển thị bằng tên trong dropdown; các cờ bật/tắt dùng checkbox. Giá trị số trong JSON giữ nguyên để tương thích pipeline cũ. Kernel/block phải lẻ. `channel.space`: 0 BGR, 1 HSV, 2 Lab; chỉ số channel 0..2. Hue HSV 0..179. Morphology: 0 open, 1 close, 2 erode, 3 dilate, 4 top-hat, 5 black-hat. Shape: 0 rectangle, 1 cross, 2 ellipse. Blur sau mask làm ảnh mất tính nhị phân nên cần threshold lại trước khi lọc component hoặc xuất.
 
 ## Ground truth
 
@@ -87,7 +87,7 @@ docker run --rm --network none --user "$(id -u):$(id -g)" \
   --output /data/results-demo
 ```
 
-`--write-default pipeline.json` xuất config mặc định. Exit code: 0 chạy xong, 1 lỗi setup/config, 2 có ảnh/GT lỗi, 130 bị hủy. Ảnh `below_target` là kết quả đánh giá hợp lệ nên vẫn exit 0; đọc report để quyết định pass sản xuất. CLI dùng cùng engine với GUI; có thể tái sử dụng `src/pipeline.*` trong app C++ (QtCore để đọc JSON; các thuật toán xử lý là OpenCV).
+`--write-default pipeline.json` xuất config mặc định. Exit code: 0 chạy xong, 1 lỗi setup/config, 2 có ảnh/GT lỗi, 130 bị hủy. Ảnh `below_target` là kết quả đánh giá hợp lệ nên vẫn exit 0; đọc report để quyết định pass sản xuất. CLI dùng cùng engine với GUI; có thể tái sử dụng `src/pipeline.*` trong app C++ (QtCore để đọc JSON, QtGui để decode ảnh bổ sung; các thuật toán xử lý là OpenCV).
 
 ## Kiểm thử / bố cục source
 
@@ -100,7 +100,7 @@ Các API contour/connected-components được dùng theo [tài liệu OpenCV](h
 
 Bấm trực tiếp một bước trong pipeline để xem kết quả, dùng **Previous step / Next step** để chuyển. **Before / after step** đặt đầu vào của bước bên trái và đầu ra bên phải. Zoom được giữ khi thay đổi tham số hoặc chuyển view cùng kích thước. Bước tắt được báo rõ, không hiển thị nhầm output bước khác. **Export all steps** xuất ảnh PNG theo số thứ tự, config, thời gian và manifest; các ảnh overlay đã được vẽ biên nếu có.
 
-Menu **Presets** có **Precision boundaries** và **Low contrast + boundaries**. Đây là điểm bắt đầu để thử, không phải cấu hình đã tối ưu cho một dataset cụ thể. `images.jpeg` chỉ là ảnh xem thử local, không được đưa vào repo hay release.
+Menu **Auto / presets** có **Precision boundaries** và **Low contrast + boundaries**. Đây là điểm bắt đầu để thử, không phải cấu hình đã tối ưu cho một dataset cụ thể. `images.jpeg` chỉ là ảnh xem thử local, không được đưa vào repo hay release.
 
 | Bước | Chức năng / tham số chính |
 | --- | --- |
@@ -119,7 +119,7 @@ Guided filter và Sauvola được hiện thực từ các phép toán OpenCV co
 
 ## Binary release
 
-Mỗi release có `.deb`, `.tar.gz` cho **Ubuntu 22.04 x86_64** và `SHA256SUMS`. Cài bản `.deb` bằng `sudo apt install ./padlab-0.1.0-ubuntu22.04-amd64.deb`; lệnh này giải quyết các thư viện runtime. Sau đó mở **PadLab** từ menu ứng dụng hoặc chạy `padlab` trong terminal. Gói tar chứa binary liên kết động; xem `INSTALL.txt` để cài dependency.
+Mỗi release có `.deb`, `.tar.gz` cho **Ubuntu 22.04 x86_64** và `SHA256SUMS`. Cài bản `.deb` bằng `sudo apt install ./padlab-0.2.0-ubuntu22.04-amd64.deb`; lệnh này giải quyết các thư viện runtime. Sau đó mở **PadLab** từ menu ứng dụng hoặc chạy `padlab` trong terminal. Gói tar chứa binary liên kết động; xem `INSTALL.txt` để cài dependency.
 
 Build local bằng `./scripts/build-docker.sh`; gói release nằm trong `artifacts/ubuntu22/release/`. Cả GUI/CLI và các thuật toán mới đều được kiểm thử trong Docker Ubuntu 22.04 trước khi đóng gói.
 
@@ -130,4 +130,39 @@ Build local bằng `./scripts/build-docker.sh`; gói release nằm trong `artifa
 ./scripts/publish-release.sh gabapppp/padlab
 ```
 
-Script kiểm tra checksum và tag, đăng nhập GitHub CLI nếu cần, tạo repo public nếu chưa tồn tại, push nhánh `main` + tag `v0.1.0`, rồi upload ba file release. Script không thay thế release hoặc tag đã tồn tại.
+Với source mới, commit các thay đổi và tạo tag `v0.2.0` tại commit đó trước khi chạy script. Tag `v0.1.0` của bản cũ được giữ nguyên.
+
+Script kiểm tra checksum và tag, đăng nhập GitHub CLI nếu cần, tạo repo public nếu chưa tồn tại, push nhánh `main` + tag `v0.2.0`, rồi upload ba file release. Script không thay thế release hoặc tag đã tồn tại.
+
+
+## Định dạng ảnh và chuyển đổi đầu vào (v0.2)
+
+GUI và CLI dùng chung bộ đọc: OpenCV trước, Qt image plugins khi cần. Bản Docker và `.deb` cài `qt5-image-formats-plugins` cùng `kimageformat-plugins`. **Help → Image formats and conversion** liệt kê phần mở rộng từ các plugin thực tế. Hỗ trợ BMP/DIB, JPEG, PNG, TIFF, WebP, JPEG 2000, PBM/PGM/PPM/PNM, PFM, Sun Raster, HDR; plugin bổ sung GIF, TGA, PCX, ICO và các định dạng khác tùy codec. Không phải mọi biến thể của một định dạng đều được codec hỗ trợ; lỗi decode được ghi riêng từng ảnh trong batch. RAW camera và DICOM chưa được kiểm định: chuyển sang TIFF/PNG trước khi dùng.
+
+**Open image → All files** thử nhận dạng theo nội dung cho ảnh có đuôi lạ. Chạy folder lọc phần mở rộng không phân biệt hoa/thường, không recursive. Tên Unicode được đọc qua bộ đệm. Ảnh nhiều trang/animation chỉ lấy **trang/frame đầu tiên**; chưa có chạy toàn bộ stack hoặc chọn frame.
+
+Vùng làm việc vẫn là **8-bit BGR**, không phải pipeline giữ nguyên độ sâu cao:
+
+- OpenCV decode 8-bit: giữ cường độ; ảnh grayscale chuyển thành ba kênh.
+- OpenCV decode unsigned 16-bit: ánh xạ cố định `0..65535 → 0..255`. Ảnh 10/12-bit chứa trong TIFF 16-bit có thể tối; thêm **Auto contrast** để giãn tương phản.
+- Float/signed: min/max toàn ảnh về 0..255; ảnh hằng số về 0; từ chối NaN/Infinity.
+- Qt fallback decode qua RGBA8, thông tin codec được hiển thị rõ. Alpha ghép trên nền đen. Giữ thứ tự pixel lưu trong file, không tự xoay EXIF, không resize.
+- GT vẫn yêu cầu 8-bit một kênh và đúng kích thước; không tự chuẩn hóa GT.
+
+Thanh thông tin và tooltip cho biết bộ decode, độ sâu đã decode, kích thước và phép chuyển đổi. Trường `input` trong `metrics.json` giữ thông tin này cho từng ảnh, kể cả batch.
+
+## Auto và thao tác nhanh
+
+**Auto / presets** có ba điểm bắt đầu: **global threshold**, **uneven lighting**, **edge regions**. Preset thay pipeline đang chỉnh; **Edit → Undo** hoặc **Ctrl+Z** phục hồi. Auto tính lại trên mỗi ảnh theo config đã xuất, không dùng ground truth để chọn kết quả.
+
+| Bước | Cách hoạt động |
+| --- | --- |
+| `auto_contrast` | Giãn hai percentile về 0..255; `clip_percent` cắt mỗi đầu histogram. Ảnh không có khoảng tương phản giữ nguyên. |
+| `auto_gamma` | Ước lượng gamma từ mean và `target`; gamma giới hạn 0.2..5. Target là mục tiêu xấp xỉ, không đảm bảo mean đầu ra bằng chính xác target. |
+| `auto_threshold` | Otsu hoặc Triangle. Polarity: Auto/Bright/Dark. Auto chọn đa số pixel viền ngoài làm background; khi đối tượng chiếm viền ảnh, chọn Bright hoặc Dark thủ công. Ảnh cường độ hằng số trả mask rỗng. |
+| `auto_polarity` | Đảo mask khi đa số viền ngoài đang là foreground; áp dụng cùng giả định trên. |
+| `auto_canny` | Ngưỡng high bằng 90% percentile gradient Sobel khác 0, low theo `low_ratio`; dùng L2 gradient. Ảnh không có gradient trả mask rỗng. |
+
+Các bước tone/auto threshold/Canny cần grayscale intensity trước khi nhị phân hóa. Click bước để xem **Auto selected**; `automatic` trong `metrics.json` và `stages.json` lưu giá trị thực tế. Preset edge regions dùng close + fill holes: đường biên hở có thể chưa tạo thành vùng kín, cần tinh chỉnh.
+
+Kéo thả một ảnh để mở; **Ctrl+O** chọn ảnh. **← Image / Image →** hoặc **Alt+Left / Alt+Right** duyệt ảnh cùng thư mục, giữ pipeline và xóa GT của ảnh trước. Thêm bước sẽ chèn sau bước đang chọn. Dropdown tham số dùng tên màu, phương pháp, polarity và hình kernel; checkbox cho cờ bật/tắt. **Ctrl+Z / Ctrl+Shift+Z** hoặc menu Edit undo/redo tối đa 100 trạng thái pipeline, không undo dữ liệu hay file đã xuất.

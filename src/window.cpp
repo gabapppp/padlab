@@ -25,29 +25,47 @@ void ImageView::setImage(const cv::Mat& m,const std::vector<pad::EdgeContour>& b
 void ImageView::fit(){if(!scene()->sceneRect().isEmpty())fitInView(scene()->sceneRect(),Qt::KeepAspectRatio);}
 void ImageView::wheelEvent(QWheelEvent* e){double f=e->angleDelta().y()>0?1.2:1/1.2;double next=transform().m11()*f;if(next>0.01&&next<40)scale(f,f);e->accept();}
 Window::Window(){
- setWindowTitle("PadLab — Image processing / OpenCV");resize(1460,900);
+ setWindowTitle("PadLab — Image processing / OpenCV");resize(1460,900);setAcceptDrops(true);
+ auto* editMenu=menuBar()->addMenu("Edit");undoAction_=editMenu->addAction("Undo pipeline change");redoAction_=editMenu->addAction("Redo pipeline change");
+ undoAction_->setObjectName("undoPipeline");redoAction_->setObjectName("redoPipeline");
+ undoAction_->setShortcut(QKeySequence::Undo);redoAction_->setShortcut(QKeySequence::Redo);
+ undoAction_->setEnabled(false);redoAction_->setEnabled(false);
+ connect(undoAction_,&QAction::triggered,this,[this]{restoreHistory(-1);});connect(redoAction_,&QAction::triggered,this,[this]{restoreHistory(1);});
+ auto* helpMenu=menuBar()->addMenu("Help");auto* formats=helpMenu->addAction("Image formats and conversion");
+ connect(formats,&QAction::triggered,this,[this]{QMessageBox::information(this,"Image formats", "OpenCV + installed Qt image codecs:\n"+pad::imageExtensions().join(", ")+"\n\nCodec availability also depends on the file variant. Open any file with All files.\n16-bit unsigned: fixed 0..65535 → 0..255. Float/signed: per-image min/max. Alpha: black background. Stored pixel orientation is preserved.\nMulti-page/animated files: first page/frame only. RAW and DICOM: convert before import. Ground truth remains 8-bit single-channel PNG.");});
  auto* toolbar=addToolBar("Workspace");toolbar->setMovable(false);
- auto action=[&](const QString& label,std::function<void()> fn){auto* a=toolbar->addAction(label);connect(a,&QAction::triggered,this,[fn]{fn();});};
- action("Open image",[this]{auto p=QFileDialog::getOpenFileName(this,"Open image",{},"Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp)");if(!p.isEmpty())openImage(p);});
- action("Load GT mask",[this]{auto p=QFileDialog::getOpenFileName(this,"Single-channel GT mask",{},"PNG (*.png)");if(!p.isEmpty()){maskPath_=p;schedule();}});
- action("Load GT boxes",[this]{auto p=QFileDialog::getOpenFileName(this,"GT boxes JSON",{},"JSON (*.json)");if(!p.isEmpty()){boxPath_=p;schedule();}});
- action("Clear GT",[this]{maskPath_.clear();boxPath_.clear();schedule();});toolbar->addSeparator();
+ auto action=[&](const QString& label,std::function<void()> fn){auto* a=toolbar->addAction(label);connect(a,&QAction::triggered,this,[fn]{fn();});return a;};
+ action("Open image",[this]{auto p=QFileDialog::getOpenFileName(this,"Open image",{},pad::imageFileFilter());if(!p.isEmpty())openImage(p);})->setShortcut(QKeySequence::Open);
+ auto* gtButton=new QToolButton;gtButton->setText("Ground truth");gtButton->setPopupMode(QToolButton::InstantPopup);auto* gtMenu=new QMenu(gtButton);
+ connect(gtMenu->addAction("Load mask…"),&QAction::triggered,this,[this]{auto p=QFileDialog::getOpenFileName(this,"Single-channel GT mask",{},"PNG (*.png)");if(!p.isEmpty()){maskPath_=p;schedule();}});
+ connect(gtMenu->addAction("Load boxes…"),&QAction::triggered,this,[this]{auto p=QFileDialog::getOpenFileName(this,"GT boxes JSON",{},"JSON (*.json)");if(!p.isEmpty()){boxPath_=p;schedule();}});
+ connect(gtMenu->addAction("Clear ground truth"),&QAction::triggered,this,[this]{maskPath_.clear();boxPath_.clear();schedule();});
+ gtButton->setMenu(gtMenu);toolbar->addWidget(gtButton);toolbar->addSeparator();
  action("Load pipeline",[this]{auto p=QFileDialog::getOpenFileName(this,"Load pipeline",{},"JSON (*.json)");if(p.isEmpty())return;try{config_=pad::loadConfig(p);viewKey_=-1;rebuildSteps();schedule();}catch(const std::exception& e){error(e.what());}});
  action("Export pipeline",[this]{auto p=QFileDialog::getSaveFileName(this,"Export reusable pipeline", "pipeline.json","JSON (*.json)");if(p.isEmpty())return;try{pad::validate(config_);pad::saveJson(p,config_);statusBar()->showMessage("Pipeline exported. Use padlab-cli with the same JSON.",5000);}catch(const std::exception& e){error(e.what());}});
  action("Export result",[this]{exportResult();});
- auto* presets=new QToolButton;presets->setText("Presets");presets->setPopupMode(QToolButton::InstantPopup);auto* presetMenu=new QMenu(presets);
+ auto* presets=new QToolButton;presets->setText("Auto / presets");presets->setPopupMode(QToolButton::InstantPopup);auto* presetMenu=new QMenu(presets);
+ const QStringList autoNames{"Auto · global threshold", "Auto · uneven lighting", "Auto · edge regions"};
+ for(int i=0;i<autoNames.size();i++){auto* a=presetMenu->addAction(autoNames[i]);a->setObjectName(QString("autoPreset%1").arg(i));connect(a,&QAction::triggered,this,[this,i]{config_=pad::automaticConfig(i);viewKey_=-1;rebuildSteps();schedule();});}
+ presetMenu->addSeparator();
  auto* precision=presetMenu->addAction("Precision boundaries");precision->setObjectName("precisionPreset");
  auto* contrast=presetMenu->addAction("Low contrast + boundaries");
  connect(precision,&QAction::triggered,this,[this]{config_=pad::precisionConfig();rebuildSteps(config_["steps"].toArray().size()-1);viewKey_=steps_->currentRow();schedule();});
  connect(contrast,&QAction::triggered,this,[this]{config_=pad::precisionConfig(true);rebuildSteps(config_["steps"].toArray().size()-1);viewKey_=steps_->currentRow();schedule();});
  presets->setMenu(presetMenu);toolbar->addWidget(presets);
  action("Reset",[this]{config_=pad::defaultConfig();viewKey_=-1;rebuildSteps();schedule();});
- auto* root=new QWidget;setCentralWidget(root);auto* layout=new QVBoxLayout(root);fileLabel_=new QLabel("Open an image to begin. Data is processed locally.");layout->addWidget(fileLabel_);
- auto* split=new QSplitter;layout->addWidget(split,1);auto* left=new QWidget;auto* ll=new QVBoxLayout(left);ll->addWidget(new QLabel("PIPELINE · ordered steps"));steps_=new QListWidget;ll->addWidget(steps_,1);
- auto* addrow=new QHBoxLayout;addType_=new QComboBox;for(const auto& d:pad::definitions())addType_->addItem(d.label,d.type);addrow->addWidget(addType_,1);auto* add=new QPushButton("Add");addrow->addWidget(add);ll->addLayout(addrow);
+ auto* root=new QWidget;setCentralWidget(root);auto* layout=new QVBoxLayout(root);auto* fileRow=new QHBoxLayout;previousImage_=new QPushButton("← Image");nextImage_=new QPushButton("Image →");
+ previousImage_->setObjectName("previousImage");nextImage_->setObjectName("nextImage");previousImage_->setEnabled(false);nextImage_->setEnabled(false);
+ previousImage_->setShortcut(QKeySequence("Alt+Left"));nextImage_->setShortcut(QKeySequence("Alt+Right"));
+ previousImage_->setToolTip("Previous image in this folder · Alt+Left");nextImage_->setToolTip("Next image in this folder · Alt+Right");
+ connect(previousImage_,&QPushButton::clicked,this,[this]{navigateImage(-1);});connect(nextImage_,&QPushButton::clicked,this,[this]{navigateImage(1);});
+ fileLabel_=new QLabel("Drop an image here or press Ctrl+O. Choose Auto / presets to get started.");fileLabel_->setObjectName("imageDetails");fileLabel_->setWordWrap(true);fileLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+ fileRow->addWidget(previousImage_);fileRow->addWidget(fileLabel_,1);fileRow->addWidget(nextImage_);layout->addLayout(fileRow);
+ auto* split=new QSplitter;layout->addWidget(split,1);auto* left=new QWidget;auto* ll=new QVBoxLayout(left);ll->addWidget(new QLabel("PIPELINE · ordered steps"));steps_=new QListWidget;steps_->setWordWrap(true);steps_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);ll->addWidget(steps_,1);
+ auto* addrow=new QHBoxLayout;addType_=new QComboBox;addType_->setMinimumWidth(180);addType_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);for(const auto& d:pad::definitions())addType_->addItem(d.label,d.type);addrow->addWidget(addType_,1);auto* add=new QPushButton("Add");addrow->addWidget(add);ll->addLayout(addrow);
  auto* commands=new QHBoxLayout;auto* up=new QPushButton("↑");auto* down=new QPushButton("↓");auto* remove=new QPushButton("Remove");commands->addWidget(up);commands->addWidget(down);commands->addWidget(remove);ll->addLayout(commands);
- auto* paramBox=new QGroupBox("Selected step parameters");params_=new QFormLayout(paramBox);auto* paramScroll=new QScrollArea;paramScroll->setWidgetResizable(true);paramScroll->setWidget(paramBox);ll->addWidget(paramScroll,1);
- auto* help=new QLabel("Click a step to inspect its output.\nColor space: 0 BGR, 1 HSV, 2 Lab\nMorphology: 0 open, 1 close, 2 erode,\n3 dilate, 4 top-hat, 5 black-hat\nShape: 0 rectangle, 1 cross, 2 ellipse\nHSV hue: 0–179. Kernels must be odd.\nEdge source: 0 original gray, 1 last intensity.\nBoundary coordinates are measurements;\nmask IoU uses the binary mask.");help->setWordWrap(true);ll->addWidget(help);split->addWidget(left);
+ auto* paramBox=new QGroupBox("Selected step parameters");params_=new QFormLayout(paramBox);params_->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);params_->setRowWrapPolicy(QFormLayout::WrapLongRows);auto* paramScroll=new QScrollArea;paramScroll->setWidgetResizable(true);paramScroll->setWidget(paramBox);ll->addWidget(paramScroll,1);
+ auto* help=new QLabel("Click a step to compare input / output.\nCtrl+Z: undo · Alt+←/→: change image.\nAuto polarity assumes the image border is background. Use Bright / Dark to override.");help->setWordWrap(true);ll->addWidget(help);split->addWidget(left);
  auto* tabs=new QTabWidget;split->addWidget(tabs);auto* previewPage=new QWidget;auto* pl=new QVBoxLayout(previewPage);
  auto* viewTools=new QHBoxLayout;stage_=new QComboBox;stage_->setObjectName("stageSelector");viewTools->addWidget(new QLabel("View:"));viewTools->addWidget(stage_,1);auto* fit=new QPushButton("Fit both");viewTools->addWidget(fit);pl->addLayout(viewTools);
  auto* inspectTools=new QHBoxLayout;auto* previousStep=new QPushButton("Previous step");previousStep->setObjectName("previousStep");auto* nextStep=new QPushButton("Next step");nextStep->setObjectName("nextStep");
@@ -65,8 +83,8 @@ Window::Window(){
  inputFolder_=folder("Images (non-recursive)",false);maskFolder_=folder("GT masks (optional)",false);boxFolder_=folder("GT boxes (optional)",false);outputFolder_=folder("New output directory",true);
  auto* note=new QLabel("Pairing: photo.jpg → masks/photo.jpg.png, boxes/photo.jpg.json.\nMask foreground = nonzero. Coordinates and mask size must match the original image. Box GT takes precedence for detection metrics.");note->setWordWrap(true);bl->addWidget(note);
  auto* runrow=new QHBoxLayout;batchButton_=new QPushButton("Run folder");cancelButton_=new QPushButton("Cancel");cancelButton_->setEnabled(false);failOnly_=new QCheckBox("Only errors / below target / unlabeled");runrow->addWidget(batchButton_);runrow->addWidget(cancelButton_);runrow->addWidget(failOnly_);runrow->addStretch();bl->addLayout(runrow);progress_=new QProgressBar;progress_->setValue(0);bl->addWidget(progress_);
- table_=new QTableWidget;table_->setColumnCount(8);table_->setHorizontalHeaderLabels({"Image","Status","Regions","ms","Mask IoU %","Dice %","Box TP/FP/FN","Error"});table_->setEditTriggers(QAbstractItemView::NoEditTriggers);table_->setSelectionBehavior(QAbstractItemView::SelectRows);table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);table_->horizontalHeader()->setStretchLastSection(true);bl->addWidget(table_,1);tabs->addTab(batchPage,"Folder evaluation");split->setSizes({340,1100});
- connect(add,&QPushButton::clicked,this,[this]{auto a=config_["steps"].toArray();a.append(pad::defaultStep(addType_->currentData().toString()));config_["steps"]=a;rebuildSteps(a.size()-1);viewKey_=steps_->currentRow();schedule();});
+ table_=new QTableWidget;table_->setColumnCount(8);table_->setHorizontalHeaderLabels({"Image","Status","Regions","ms","Mask IoU %","Dice %","Box TP/FP/FN","Error"});table_->setEditTriggers(QAbstractItemView::NoEditTriggers);table_->setSelectionBehavior(QAbstractItemView::SelectRows);table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);table_->horizontalHeader()->setStretchLastSection(true);bl->addWidget(table_,1);tabs->addTab(batchPage,"Folder evaluation");split->setSizes({390,1050});
+ connect(add,&QPushButton::clicked,this,[this]{auto a=config_["steps"].toArray();int position=steps_->currentRow()+1;a.insert(position,pad::defaultStep(addType_->currentData().toString()));config_["steps"]=a;rebuildSteps(position);viewKey_=steps_->currentRow();schedule();});
  auto move=[this](int direction){int i=steps_->currentRow();auto a=config_["steps"].toArray();int j=i+direction;if(i<0||j<0||j>=a.size())return;QJsonValue v=a[i];a[i]=a[j];a[j]=v;config_["steps"]=a;rebuildSteps(j);viewKey_=j;schedule();};
  connect(up,&QPushButton::clicked,this,[move]{move(-1);});connect(down,&QPushButton::clicked,this,[move]{move(1);});
  connect(remove,&QPushButton::clicked,this,[this]{int i=steps_->currentRow();if(i<0)return;auto a=config_["steps"].toArray();a.removeAt(i);config_["steps"]=a;rebuildSteps(qMax(0,i-1));viewKey_=steps_->currentRow();schedule();});
@@ -80,15 +98,57 @@ Window::Window(){
  connect(&batchWatcher_,&QFutureWatcher<BatchReply>::finished,this,[this]{batchButton_->setEnabled(true);cancelButton_->setEnabled(false);auto reply=batchWatcher_.result();if(!reply.error.isEmpty()){error(reply.error);return;}batch_=std::move(reply.batch);fillTable();statusBar()->showMessage(QString("%1 · %2 processed · %3 errors · %4 passed · report: %5").arg(batch_.cancelled?"Cancelled":"Complete").arg(batch_.rows.size()).arg(batch_.summary["errors"].toInt()).arg(batch_.summary["passed"].toInt()).arg(batchOutput_),0);});
  connect(table_,&QTableWidget::cellDoubleClicked,this,[this,tabs](int row,int){auto* item=table_->item(row,0);if(!item)return;QString p=item->data(Qt::UserRole).toString();config_=batchConfig_;rebuildSteps();openImage(p);maskPath_=item->data(Qt::UserRole+1).toString();boxPath_=item->data(Qt::UserRole+2).toString();schedule();tabs->setCurrentIndex(0);});
  setStyleSheet("QMainWindow { background: #f3f5f8; } QToolBar { background: #ffffff; border-bottom: 1px solid #d8dee8; spacing: 6px; padding: 6px; } QPushButton { padding: 6px 12px; } QGroupBox { font-weight: 600; } QListWidget::item { padding: 7px 3px; } QTabBar::tab { padding: 9px 18px; } QHeaderView::section { background: #e8edf4; padding: 7px; border: 0; } QTableWidget { gridline-color: #e1e6ee; } ");
- rebuildSteps();
+ history_.push_back(config_);historyIndex_=0;rebuildSteps();
 }
 Window::~Window(){if(cancel_)cancel_->store(true);previewWatcher_.waitForFinished();batchWatcher_.waitForFinished();}
 void Window::error(const QString& message){QMessageBox::warning(this,"PadLab",message);}
-void Window::rebuildSteps(int selected){rebuilding_=true;steps_->clear();auto a=config_["steps"].toArray();for(int i=0;i<a.size();i++){auto s=a[i].toObject();auto* item=new QListWidgetItem(QString::number(i+1)+". "+s["type"].toString(),steps_);item->setFlags(item->flags()|Qt::ItemIsUserCheckable);item->setCheckState(s["enabled"].toBool()?Qt::Checked:Qt::Unchecked);}steps_->setCurrentRow(qMin(selected,a.size()-1));auto e=config_["evaluation"].toObject();maskTarget_->setValue(e["mask_iou_target"].toDouble());boxTarget_->setValue(e["box_iou_threshold"].toDouble());rebuilding_=false;buildParams();}
-void Window::buildParams(){while(params_->count()){auto* item=params_->takeAt(0);if(item->widget())item->widget()->deleteLater();delete item;}int i=steps_->currentRow();if(i<0)return;auto s=config_["steps"].toArray()[i].toObject();for(const auto& d:pad::definitions())if(d.type==s["type"].toString())for(const auto& p:d.parameters){auto* spin=new QDoubleSpinBox;spin->setRange(p.min,p.max);spin->setDecimals(p.integer?0:4);spin->setSingleStep((p.key=="kernel"||p.key=="block")?2:((p.key=="epsilon"||p.key=="min_curvature")?0.001:(p.integer?1:0.05)));spin->setValue(s["params"].toObject()[p.key].toDouble());params_->addRow(p.key,spin);connect(spin,QOverload<double>::of(&QDoubleSpinBox::valueChanged),this,[this,i,key=p.key](double value){auto a=config_["steps"].toArray();if(i>=a.size())return;auto step=a[i].toObject();auto p=step["params"].toObject();p[key]=value;step["params"]=p;a[i]=step;config_["steps"]=a;schedule();});}}
-void Window::schedule(){generation_++;last_=Preview{};metrics_->setText("Configuration changed · awaiting preview");state_->clear();stageInfo_->setText("Recomputing selected view…");stage_->clear();outputView_->setImage({});debounce_.start();}
-void Window::openImage(const QString& path){try{auto m=pad::readImage(path);image_=m;imagePath_=path;maskPath_.clear();boxPath_.clear();inputView_->setImage(m);fileLabel_->setText(path+QString(" · %1 × %2").arg(m.cols).arg(m.rows));schedule();}catch(const std::exception& e){error(e.what());}}
-void Window::preview(){if(image_.empty())return;try{pad::validate(config_);}catch(const std::exception& e){state_->setText("Invalid pipeline: "+QString::fromUtf8(e.what()));return;}if(previewWatcher_.isRunning()){pending_=true;return;}auto image=image_.clone();auto c=config_;auto file=imagePath_,mask=maskPath_,boxes=boxPath_;auto generation=generation_;state_->setText("Processing…");previewWatcher_.setFuture(QtConcurrent::run([image,c,file,mask,boxes,generation]{Preview p;p.generation=generation;try{p.result=pad::run(image,c);p.row=pad::assess(file,p.result,c,mask,boxes);if(!mask.isEmpty()){p.truth=pad::readImage(mask,true);p.difference=image.clone();for(int y=0;y<image.rows;y++)for(int x=0;x<image.cols;x++){bool a=p.result.mask.at<uchar>(y,x),b=p.truth.at<uchar>(y,x);if(a||b)p.difference.at<cv::Vec3b>(y,x)=a&&b?cv::Vec3b(0,210,0):(a?cv::Vec3b(0,0,255):cv::Vec3b(220,0,220));}}}catch(const std::exception& e){p.error=QString::fromUtf8(e.what());}return p;}));}
+void Window::rebuildSteps(int selected){rebuilding_=true;steps_->clear();auto a=config_["steps"].toArray();for(int i=0;i<a.size();i++){auto s=a[i].toObject();QString type=s["type"].toString(),label=type;for(const auto& d:pad::definitions())if(d.type==type)label=d.label;auto* item=new QListWidgetItem(QString::number(i+1)+". "+label,steps_);item->setData(Qt::UserRole,type);item->setToolTip(label+" ["+type+"]"+"\nClick to inspect this step. Uncheck to bypass.");item->setFlags(item->flags()|Qt::ItemIsUserCheckable);item->setCheckState(s["enabled"].toBool()?Qt::Checked:Qt::Unchecked);}steps_->setCurrentRow(qMin(selected,a.size()-1));auto e=config_["evaluation"].toObject();maskTarget_->setValue(e["mask_iou_target"].toDouble());boxTarget_->setValue(e["box_iou_threshold"].toDouble());rebuilding_=false;buildParams();}
+void Window::buildParams(){
+ while(params_->count()){auto* item=params_->takeAt(0);if(item->widget())item->widget()->deleteLater();delete item;}
+ int i=steps_->currentRow();if(i<0)return;auto step=config_["steps"].toArray()[i].toObject();const QString type=step["type"].toString();
+ for(const auto& d:pad::definitions())if(d.type==type){
+  if(d.parameters.empty())params_->addRow(new QLabel("This step has no parameters."));
+  for(const auto& p:d.parameters){
+   auto update=[this,i,key=p.key](double value){auto a=config_["steps"].toArray();if(i>=a.size())return;auto step=a[i].toObject();auto parameters=step["params"].toObject();parameters[key]=value;step["params"]=parameters;a[i]=step;config_["steps"]=a;schedule();};
+   QString label=p.key;label.replace('_',' ');label[0]=label[0].toUpper();double value=step["params"].toObject()[p.key].toDouble();QStringList choices;
+   if(type=="channel"&&p.key=="space")choices=QStringList{"BGR","HSV","Lab"};
+   if(type=="channel"&&p.key=="channel"){
+    int space=step["params"].toObject()["space"].toInt();choices=space==0?QStringList{"Blue","Green","Red"}:space==1?QStringList{"Hue","Saturation","Value"}:QStringList{"Lightness","a","b"};
+   }
+   if(p.key=="operation")choices=QStringList{"Open","Close","Erode","Dilate","Top-hat","Black-hat"};
+   if(p.key=="shape")choices=QStringList{"Rectangle","Cross","Ellipse"};
+   if(p.key=="source")choices=QStringList{"Original grayscale","Last intensity stage"};
+   if(p.key=="divide")choices=QStringList{"Subtract background","Divide background"};
+   if(type=="auto_threshold"&&p.key=="method")choices=QStringList{"Otsu","Triangle"};
+   if(p.key=="polarity")choices=QStringList{"Auto (border = background)","Bright objects","Dark objects"};
+   if(!choices.isEmpty()){
+    auto* combo=new QComboBox;combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);combo->setMinimumContentsLength(12);combo->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);combo->setObjectName("param_"+p.key);combo->addItems(choices);combo->setCurrentIndex(int(value));combo->setToolTip(choices.join("\n"));params_->addRow(label,combo);
+    connect(combo,QOverload<int>::of(&QComboBox::currentIndexChanged),this,[this,update,type,key=p.key](int value){update(value);if(type=="channel"&&key=="space")buildParams();});
+   }else if(p.integer&&p.min==0&&p.max==1){
+    auto* check=new QCheckBox;check->setObjectName("param_"+p.key);check->setChecked(value!=0);params_->addRow(label,check);connect(check,&QCheckBox::toggled,this,[update](bool on){update(on?1:0);});
+   }else{
+    auto* spin=new QDoubleSpinBox;spin->setObjectName("param_"+p.key);spin->setRange(p.min,p.max);spin->setDecimals(p.integer?0:4);spin->setKeyboardTracking(false);
+    spin->setSingleStep((p.key=="kernel"||p.key=="block")?2:((p.key=="epsilon"||p.key=="min_curvature")?0.001:(p.integer?1:0.05)));spin->setValue(value);params_->addRow(label,spin);
+    spin->setToolTip(QString("%1 · range %2 to %3").arg(p.key).arg(p.min).arg(p.max));connect(spin,QOverload<double>::of(&QDoubleSpinBox::valueChanged),this,update);
+   }
+  }
+ }
+}
+void Window::restoreHistory(int direction){int index=historyIndex_+direction;if(index<0||index>=int(history_.size()))return;historyIndex_=index;config_=history_[index];rebuildSteps();viewKey_=-1;schedule();}
+void Window::navigateImage(int direction){int index=imageIndex_+direction;if(index>=0&&index<siblingImages_.size())openImage(siblingImages_[index]);}
+void Window::dragEnterEvent(QDragEnterEvent* event){if(event->mimeData()->hasUrls()&&!event->mimeData()->urls().isEmpty()&&event->mimeData()->urls().first().isLocalFile()&&QFileInfo(event->mimeData()->urls().first().toLocalFile()).isFile())event->acceptProposedAction();}
+void Window::dropEvent(QDropEvent* event){if(event->mimeData()->hasUrls()&&!event->mimeData()->urls().isEmpty()&&event->mimeData()->urls().first().isLocalFile()){openImage(event->mimeData()->urls().first().toLocalFile());event->acceptProposedAction();}}
+void Window::schedule(){
+ if(historyIndex_<0||history_[historyIndex_]!=config_){history_.resize(historyIndex_+1);history_.push_back(config_);if(history_.size()>100)history_.erase(history_.begin());historyIndex_=int(history_.size())-1;}
+ undoAction_->setEnabled(historyIndex_>0);redoAction_->setEnabled(historyIndex_+1<int(history_.size()));
+ generation_++;last_=Preview{};metrics_->setText("Configuration changed · awaiting preview");state_->clear();stageInfo_->setText("Recomputing selected view…");stage_->clear();outputView_->setImage({});debounce_.start();}
+void Window::openImage(const QString& path){try{
+ auto loaded=pad::loadImage(path);image_=loaded.image;inputMetadata_=loaded.metadata;imagePath_=QFileInfo(path).absoluteFilePath();maskPath_.clear();boxPath_.clear();inputView_->setImage(image_);
+ siblingImages_=pad::imageFiles(QFileInfo(path).absolutePath());imageIndex_=siblingImages_.indexOf(imagePath_);previousImage_->setEnabled(imageIndex_>0);nextImage_->setEnabled(imageIndex_>=0&&imageIndex_+1<siblingImages_.size());
+ fileLabel_->setText(QFileInfo(path).fileName()+(imageIndex_>=0?QString(" · %1 / %2\n").arg(imageIndex_+1).arg(siblingImages_.size()):QString(" · single image\n"))+loaded.description);
+ fileLabel_->setToolTip(imagePath_+"\n"+QString::fromUtf8(QJsonDocument(loaded.metadata).toJson(QJsonDocument::Indented)));schedule();
+ }catch(const std::exception& e){error(e.what());}}
+void Window::preview(){if(image_.empty())return;try{pad::validate(config_);}catch(const std::exception& e){state_->setText("Invalid pipeline: "+QString::fromUtf8(e.what()));return;}if(previewWatcher_.isRunning()){pending_=true;return;}auto image=image_.clone();auto c=config_;auto inputMetadata=inputMetadata_;auto file=imagePath_,mask=maskPath_,boxes=boxPath_;auto generation=generation_;state_->setText("Processing…");previewWatcher_.setFuture(QtConcurrent::run([image,c,file,mask,boxes,generation,inputMetadata]{Preview p;p.generation=generation;try{p.result=pad::run(image,c);p.row=pad::assess(file,p.result,c,mask,boxes);p.row.inputMetadata=inputMetadata;if(!mask.isEmpty()){p.truth=pad::readImage(mask,true);p.difference=image.clone();for(int y=0;y<image.rows;y++)for(int x=0;x<image.cols;x++){bool a=p.result.mask.at<uchar>(y,x),b=p.truth.at<uchar>(y,x);if(a||b)p.difference.at<cv::Vec3b>(y,x)=a&&b?cv::Vec3b(0,210,0):(a?cv::Vec3b(0,0,255):cv::Vec3b(220,0,220));}}}catch(const std::exception& e){p.error=QString::fromUtf8(e.what());}return p;}));}
 void Window::refreshViews(){
  QSignalBlocker block(stage_);stage_->clear();
  stage_->addItem("Overlay + boxes",-1);stage_->addItem("Final mask",-2);stage_->addItem("Original image",-5);
@@ -122,6 +182,13 @@ void Window::showStage(){
    int points=0,localized=0,refined=0;for(const auto& contour:s.boundaries)for(const auto& p:contour.points){points++;localized+=p.localized;refined+=p.refined;}
    detail+=QString("\nBoundary: %1 / %2 localized, %3 refined · cyan = measured, dashed = seed, orange = rejected").arg(localized).arg(points).arg(refined);
   }
+  if(!s.automatic.isEmpty()){
+   QStringList values;for(auto it=s.automatic.begin();it!=s.automatic.end();++it){
+    if(it.key()=="rule")continue;QString key=it.key();key.replace('_',' ');
+    auto value=it.value();values<<key+" = "+(value.isBool()?(value.toBool()?"yes":"no"):value.isDouble()?QString::number(value.toDouble(),'g',5):value.toString());
+   }
+   detail+="\nAuto selected: "+values.join(" · ");
+  }
   stageInfo_->setText(detail);return;
  }
  outputView_->setImage({});stageInfo_->setText("This step is disabled; it has no output. Enable it to inspect the result.");
@@ -130,7 +197,7 @@ void Window::exportStages(){
  if(last_.result.stages.empty()||last_.generation!=generation_||!last_.error.isEmpty()){error("Wait for a valid current preview first");return;}
  auto parent=QFileDialog::getExistingDirectory(this,"Export step images into a new subdirectory");if(parent.isEmpty())return;
  try{QString path=QDir(parent).filePath("padlab-steps-"+QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz"));
-  pad::exportStageImages(path,image_,last_.result,config_);statusBar()->showMessage("Step images exported: "+path,8000);
+  pad::exportStageImages(path,image_,last_.result,config_);pad::saveJson(QDir(path).filePath("input.json"),inputMetadata_);statusBar()->showMessage("Step images exported: "+path,8000);
  }catch(const std::exception& e){error(e.what());}
 }
 void Window::startBatch(){try{pad::validate(config_);if(inputFolder_->text().isEmpty()||outputFolder_->text().isEmpty())throw std::runtime_error("Select image and new output directories");auto files=pad::imageFiles(inputFolder_->text());if(files.isEmpty())throw std::runtime_error("No images in input folder");batchConfig_=config_;batchOutput_=outputFolder_->text();batch_.rows.clear();fillTable();cancel_=std::make_shared<std::atomic_bool>(false);auto cancel=cancel_;auto input=inputFolder_->text(),masks=maskFolder_->text(),boxes=boxFolder_->text(),output=batchOutput_;auto c=batchConfig_;progress_->setRange(0,files.size());progress_->setValue(0);batchButton_->setEnabled(false);cancelButton_->setEnabled(true);QPointer<Window> self(this);batchWatcher_.setFuture(QtConcurrent::run([self,input,masks,boxes,output,c,cancel]{BatchReply reply;try{reply.batch=pad::runFolder(input,masks,boxes,output,c,*cancel,[self](int value,int total){if(self)QMetaObject::invokeMethod(self,[self,value,total]{if(self){self->progress_->setRange(0,total);self->progress_->setValue(value);}},Qt::QueuedConnection);});}catch(const std::exception& e){reply.error=QString::fromUtf8(e.what());}return reply;}));}catch(const std::exception& e){error(e.what());}}

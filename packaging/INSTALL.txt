@@ -1,11 +1,11 @@
-PadLab 0.1.0 — Ubuntu 22.04 x86_64
+PadLab 0.2.0 — Ubuntu 22.04 x86_64
 
 Recommended: install the .deb on Ubuntu 22.04:
-  sudo apt install ./padlab-0.1.0-ubuntu22.04-amd64.deb
+  sudo apt install ./padlab-0.2.0-ubuntu22.04-amd64.deb
   padlab
 
 For the tar.gz binary archive, install runtime dependencies first:
-  sudo apt install libqt5widgets5 libqt5concurrent5 libopencv-core4.5d libopencv-imgproc4.5d libopencv-imgcodecs4.5d qtwayland5
+  sudo apt install libqt5widgets5 libqt5concurrent5 libopencv-core4.5d libopencv-imgproc4.5d libopencv-imgcodecs4.5d qtwayland5 qt5-image-formats-plugins kimageformat-plugins
   ./bin/padlab
 
 CLI:

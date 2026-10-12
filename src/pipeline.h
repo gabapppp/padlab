@@ -1,5 +1,8 @@
 #pragma once
 #include <QJsonObject>
+#include <QJsonArray>
+#include "imageio.h"
+#include "automatic.h"
 #include <QString>
 #include <QStringList>
 #include <opencv2/core.hpp>
@@ -24,10 +27,10 @@ struct EdgePoint {
 };
 struct EdgeContour { std::vector<EdgePoint> points; int parent=-1; bool hole=false; };
 struct Stage {
- QString name; cv::Mat image; double ms=0; int stepIndex=-1;
+ QString name; QJsonObject automatic; cv::Mat image; double ms=0; int stepIndex=-1;
  std::vector<EdgeContour> boundaries;
 };
-struct Result { cv::Mat mask, overlay; std::vector<cv::Rect> boxes; std::vector<Stage> stages; std::vector<EdgeContour> boundaries; bool hasBoundaries=false, subpixel=false; double ms=0; };
+struct Result { QJsonArray automatic; cv::Mat mask, overlay; std::vector<cv::Rect> boxes; std::vector<Stage> stages; std::vector<EdgeContour> boundaries; bool hasBoundaries=false, subpixel=false; double ms=0; };
 Result run(const cv::Mat& image, const QJsonObject& config, bool stages=true,
            const std::function<bool()>& cancelled={});
 struct Metrics { double iou=0, dice=0, precision=0, recall=0, accuracy=0; double tp=0,fp=0,fn=0,tn=0; };
